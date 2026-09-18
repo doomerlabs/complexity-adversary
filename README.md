@@ -26,7 +26,7 @@ The complete detector or review inventory is maintained in
 Run it against a local change with:
 
 ```sh
-adversary run review/complexity --path /path/to/repository
+doomer run review/complexity --path /path/to/repository
 ```
 
 This repository does not currently declare a project license. The published artifact retains the license files for its bundled third-party runtime dependencies.

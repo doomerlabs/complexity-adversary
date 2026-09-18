@@ -19,4 +19,4 @@ This repository contains the Complexity adversary. It reviews code changes for i
 - Add a regression fixture for every new signal.
 - Test both noisy and justified complexity growth.
 - Test repository-only behavior separately from diff-aware behavior.
-- Run `npm test` and `adversary validate .` before release.
+- Run `npm test` and `doomer validate .` before release.
