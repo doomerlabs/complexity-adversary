@@ -21,7 +21,7 @@ The complete detector or review inventory is maintained in
 - **Catalog reference:** `review/complexity`
 - **Version:** `0.0.12`
 - **Runtime:** Node.js 22
-- **Repository:** https://github.com/adversarylabs/complexity-adversary
+- **Repository:** https://github.com/doomerlabs/complexity-adversary
 
 Run it against a local change with:
 
