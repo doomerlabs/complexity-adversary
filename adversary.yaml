@@ -1,5 +1,5 @@
 name: review/complexity
-version: 0.0.15
+version: 0.0.16
 description: Reviews code changes for implementation complexity that appears disproportionate to the behavior being added.
 
 triggers:
