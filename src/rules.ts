@@ -35,30 +35,7 @@ export function reviewComplexity(ctx: RuleContext, analysis: Analysis): void {
   const aiOverengineering = overengineeringScore(analysis, design, growth, responsibilities) >= 6;
   const structuralClones = analysis.structuralClones;
 
-  emitMetricFinding(ctx, {
-    ruleId: "complexity.cyclomatic.increase",
-    title: "Control-flow complexity increased substantially",
-    category: "maintainability",
-    candidates: cyclomatic.map((delta) => ({ delta, reason: metricSentence(delta, "cyclomatic", "Cyclomatic") })),
-    why: "A large control-flow delta makes a change harder to verify and maintain even when the final absolute value is defensible.",
-    recommendation: "Check whether guard clauses, smaller cohesive functions, or a simpler decision model can preserve the behavior with fewer paths.",
-  });
-  emitMetricFinding(ctx, {
-    ruleId: "complexity.cognitive.increase",
-    title: "The change became materially harder to reason about",
-    category: "maintainability",
-    candidates: cognitive.map((delta) => ({ delta, reason: metricSentence(delta, "cognitive", "Cognitive") })),
-    why: "Cognitive complexity reflects the nesting and interruptions a reader must retain while following the implementation.",
-    recommendation: "Flatten the main path and extract decisions that can be named independently of the orchestration.",
-  });
-  emitMetricFinding(ctx, {
-    ruleId: "complexity.nesting.depth",
-    title: "Changed control flow is nested too deeply",
-    category: "maintainability",
-    candidates: nesting.map((delta) => ({ delta, reason: metricSentence(delta, "nesting", "Nesting depth") })),
-    why: "Deep nesting forces readers to track several active conditions and error states simultaneously.",
-    recommendation: "Prefer guard clauses and early returns, then extract a cohesive inner operation if the nesting still remains.",
-  });
+  emitControlFlowFindings(ctx, { cyclomatic, cognitive, nesting, errors });
   emitMetricFinding(ctx, {
     ruleId: "complexity.large-function-growth",
     title: "Functions grew faster than their behavior appears to require",
@@ -154,20 +131,49 @@ export function reviewComplexity(ctx: RuleContext, analysis: Analysis): void {
     recommendation: "Make the termination invariant explicit and consider an iterative worklist when several recursive branches share state.",
     confidence: "medium",
   });
-  emitMetricFinding(ctx, {
-    ruleId: "complexity.error-paths",
-    title: "Error handling expanded into competing control paths",
-    category: "reliability",
-    candidates: errors.map((delta) => ({ delta, reason: metricSentence(delta, "errorPaths", "Error paths") })),
-    why: "Nested catches, repeated cleanup, and cascading error conditions obscure which failures are handled, transformed, or allowed to escape.",
-    recommendation: "Keep cleanup in one structured boundary and flatten error translation so each failure has one obvious path.",
-  });
-
   addPositiveSignals(ctx, analysis);
   addOverallReview(ctx, analysis, {
     materialFindings: cyclomatic.length + cognitive.length + nesting.length + growth.length + responsibilities.length + (design.trivialWrappers.length > 0 ? 1 : 0) + structuralClones.length + (aiOverengineering ? 2 : 0),
     aiOverengineering,
   });
+}
+
+function emitControlFlowFindings(
+  ctx: RuleContext,
+  signals: Record<"cyclomatic" | "cognitive" | "nesting" | "errors", FunctionDelta[]>,
+): void {
+  const byFile = new Map<string, Map<FunctionDelta, string[]>>();
+  for (const [kind, label, metric] of [
+    ["cyclomatic", "Cyclomatic", "cyclomatic"],
+    ["cognitive", "Cognitive", "cognitive"],
+    ["nesting", "Nesting depth", "nesting"],
+    ["errors", "Error paths", "errorPaths"],
+  ] as const) {
+    for (const delta of signals[kind]) {
+      const functions = byFile.get(delta.path) ?? new Map<FunctionDelta, string[]>();
+      functions.set(delta, [...(functions.get(delta) ?? []), metricSentence(delta, metric, label)]);
+      byFile.set(delta.path, functions);
+    }
+  }
+  for (const [file, functions] of byFile) {
+    const candidates = [...functions].sort(([a], [b]) => importance(b) - importance(a)).slice(0, 5);
+    ctx.finding({
+      ruleId: "complexity.control-flow.increase",
+      groupKey: `complexity.control-flow:${file}`,
+      title: "Changed control flow became harder to follow",
+      category: "maintainability",
+      severity: "medium",
+      confidence: "high",
+      summary: candidates.length === 1
+        ? `${candidates[0]![0].current.name} has a substantial control-flow increase in this change.`
+        : `${candidates.length} changed functions in ${file} have related control-flow increases.`,
+      whyItMatters: "Additional branches, nesting, and error paths make the changed behavior harder to review and maintain.",
+      impact: "A future edit must account for more paths and active conditions in the affected functions.",
+      evidence: candidates.map(([delta, reasons]) => functionEvidence(delta, reasons.join(" "))),
+      recommendation: "Simplify the affected paths with guard clauses or a cohesive extraction where that preserves the behavior; keep error translation together when it spans the same operation.",
+      remediation: { complexity: "medium" },
+    });
+  }
 }
 
 function emitStructuralClones(ctx: RuleContext, clones: Analysis["structuralClones"]): void {
@@ -589,11 +595,13 @@ function importance(delta: FunctionDelta): number {
 
 function functionEvidence(delta: FunctionDelta, message: string) {
   return {
-    location: { file: delta.path, line: delta.current.line, endLine: delta.current.endLine },
+    location: { file: delta.path, line: delta.anchorLine },
     label: delta.current.name,
     message,
     data: {
       function: delta.current.name,
+      functionStartLine: delta.current.line,
+      functionEndLine: delta.current.endLine,
       previous: metricSnapshot(delta.previous),
       current: metricSnapshot(delta.current),
       delta: {

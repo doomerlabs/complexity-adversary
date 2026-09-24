@@ -77,6 +77,7 @@ export interface FunctionDelta {
   current: FunctionMetrics;
   previous?: FunctionMetrics;
   changed: boolean;
+  anchorLine: number;
 }
 
 export interface Analysis {
