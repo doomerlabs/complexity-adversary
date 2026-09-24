@@ -115,14 +115,40 @@ test("uses established cyclomatic and cognitive analyzers", () => {
 test("reports meaningful complexity deltas with concrete before and after metrics", async () => {
   const output = await review(await repository(SIMPLE, COMPLEX));
   const ids = output.findings.map((finding) => finding.ruleId);
-  assert.ok(ids.includes("complexity.cyclomatic.increase"));
-  assert.ok(ids.includes("complexity.cognitive.increase"));
-  assert.ok(ids.includes("complexity.nesting.depth"));
-  const evidence = output.findings.find((finding) => finding.ruleId === "complexity.cyclomatic.increase")?.evidence[0];
+  assert.equal(ids.filter((id) => id === "complexity.control-flow.increase").length, 1);
+  const evidence = output.findings.find((finding) => finding.ruleId === "complexity.control-flow.increase")?.evidence[0];
   assert.equal(evidence?.location?.file, "src/service.ts");
   assert.equal(evidence?.data?.function, "reconcile");
+  assert.equal(evidence?.location?.endLine, undefined);
+  assert.ok(Number(evidence?.location?.line) > 1);
   assert.deepEqual((evidence?.data?.previous as Record<string, unknown>)?.cyclomatic, 2);
   assert.ok(Number((evidence?.data?.current as Record<string, unknown>)?.cyclomatic) >= 12);
+});
+
+test("combines related control-flow signals and anchors changed statements", async () => {
+  const before = `${SIMPLE}\nexport function load(value: number) { return value; }\n`;
+  const after = `${COMPLEX}\nexport function load(value: number) {
+  try {
+    if (value < 0) throw new Error('negative');
+    if (value === 0) throw new Error('zero');
+    return value;
+  } catch (error) {
+    if (value === 0) throw error;
+    throw new Error('load failed', { cause: error });
+  } finally {
+    cleanup();
+  }
+}\n`;
+  const output = await review(await repository(before, after, "// changed tests\n"));
+  const findings = output.findings.filter((finding) => finding.ruleId === "complexity.control-flow.increase");
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]?.evidence.length, 2);
+  for (const evidence of findings[0]!.evidence) {
+    const line = evidence.location?.line;
+    assert.equal(evidence.location?.endLine, undefined);
+    assert.ok(line && /^(?:\s*|\s*}\s*)(?:if|try|catch|throw)\b/.test(after.split("\n")[line - 1] ?? ""));
+    assert.ok(Number(evidence.data?.functionEndLine) > line);
+  }
 });
 
 test("uses the runner-supplied changed files instead of re-deriving repository scope", async () => {
@@ -143,8 +169,7 @@ test("ignores small low-baseline increases", async () => {
 }
 `;
   const output = await review(await repository(SIMPLE, slightlyLarger, "// existing coverage remains representative\n"));
-  assert.equal(output.findings.some((finding) => finding.ruleId === "complexity.cyclomatic.increase"), false);
-  assert.equal(output.findings.some((finding) => finding.ruleId === "complexity.cognitive.increase"), false);
+  assert.equal(output.findings.some((finding) => finding.ruleId === "complexity.control-flow.increase"), false);
   assert.equal(output.opinion?.ship, true);
 });
 
@@ -298,7 +323,7 @@ test("covers the focused growth and state rules", async () => {
       after: "export function walk(n: number): number { if (n <= 0) return 0; return walk(n - 1) + walk(n - 2); }\n",
     },
     {
-      ruleId: "complexity.error-paths",
+      ruleId: "complexity.control-flow.increase",
       before: "export function load(value: number) { if (value < 0) throw new Error('negative'); return value; }\n",
       after: "export function load(value: number) { try { if (value < 0) throw new Error('negative'); if (value === 0) throw new Error('zero'); return value; } catch (error) { if (value === 0) throw error; throw new Error('load failed', { cause: error }); } finally { cleanup(); } }\n",
     },

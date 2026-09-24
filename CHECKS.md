@@ -5,15 +5,12 @@
 | `complexity.abstraction.premature` | Review | New interfaces, factories, or generics with little demonstrated variation |
 | `complexity.ai-overengineering` | Review | Synthesized architecture, indirection, and complexity signals |
 | `complexity.branch-without-tests` | Review | Material decision growth without changed tests |
-| `complexity.cognitive.increase` | Review | Material cognitive-complexity growth from SonarJS |
 | `complexity.configuration-explosion` | Review | Rapid growth in configuration fields consumed by a function |
-| `complexity.cyclomatic.increase` | Review | Material cyclomatic growth from an established analyzer |
-| `complexity.error-paths` | Review | Expanding throws, catches, cleanup, and error branches |
+| `complexity.control-flow.increase` | Review | Related cyclomatic, cognitive, nesting, and error-path growth combined by file and anchored to changed statements |
 | `complexity.hidden-state` | Review | Growth in mutable module, instance, global, or cache state |
 | `complexity.indirection` | Review | Long forwarding-only call chains |
 | `complexity.large-function-growth` | Review | Disproportionate relative and absolute function growth |
 | `complexity.magic-conditions` | Review | Rapidly expanding boolean expressions |
-| `complexity.nesting.depth` | Review | Increased control-flow nesting |
 | `complexity.nesting.flattened` | Review | Flattened nesting / early-return refactors |
 | `complexity.parameter-growth` | Review | Expanding parameter lists |
 | `complexity.recursion-risk` | Review | Multiple or expanding recursive paths |

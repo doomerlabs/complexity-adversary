@@ -75,7 +75,13 @@ export function analyzeDiscovery(discovery: Discovery): Analysis {
         revision?.status === "added" ||
         intersects(revision?.changedLines ?? new Set<number>(), fn.line, fn.endLine);
       if (changed) {
-        deltas.push({ path: currentFile.path, current: fn, previous: previousFunctions.get(fn.key), changed });
+        deltas.push({
+          path: currentFile.path,
+          current: fn,
+          previous: previousFunctions.get(fn.key),
+          changed,
+          anchorLine: changedFunctionLine(revision, fn),
+        });
       }
     }
   }
@@ -93,6 +99,18 @@ export function analyzeDiscovery(discovery: Discovery): Analysis {
     aggregateLocDelta: sumDelta(deltas, "loc"),
     structuralClones: findNewStructuralClones(discovery.files),
   };
+}
+
+function changedFunctionLine(revision: Discovery["files"][number] | undefined, fn: FunctionMetrics): number {
+  if (revision?.status !== "modified") return fn.line;
+  const lines = revision.current.split("\n");
+  const changed = [...revision.changedLines]
+    .filter((line) => line >= fn.line && line <= fn.endLine)
+    .sort((a, b) => a - b);
+  // Prefer the changed decision or error statement that explains the metric delta.
+  return changed.find((line) => /^\s*(?:}\s*)?(?:else\b|if\b|for\b|while\b|switch\b|try\b|catch\b|finally\b|throw\b)/.test(lines[line - 1] ?? ""))
+    ?? changed[0]
+    ?? fn.line;
 }
 
 export function analyzeFile(path: string, source: string): FileMetrics {
