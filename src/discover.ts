@@ -28,34 +28,28 @@ export interface Discovery {
   changedSourceFiles: number;
 }
 
-export async function discoverSources(ctx: RuleContext): Promise<Discovery> {
+type DiscoveryContext = Pick<RuleContext, "repoPath" | "change" | "loadInScopeSources">;
+
+export async function discoverSources(ctx: DiscoveryContext): Promise<Discovery> {
   const repoPath = ctx.repoPath;
   const sources = await ctx.loadInScopeSources({ include: isSourcePath, limit: MAX_FILES });
   if (ctx.change === null || ctx.change.scanMode === "all") {
-    return {
-      mode: "repository",
-      files: sources.map((source) => ({
-        path: source.path,
-        current: source.content,
-        changedLines: new Set<number>(),
-        status: "repository",
-      })),
-      changedTestFiles: 0,
-      changedSourceFiles: sources.length,
-    };
+    return snapshotDiscovery(sources);
+  }
+
+  const base = ctx.change.baseRef;
+  if (base === undefined || !await revisionExists(repoPath, base)) {
+    return snapshotDiscovery(sources);
   }
 
   const files: SourceRevision[] = [];
   for (const source of sources) {
-    const base = ctx.change.baseRef;
-    const exists = base !== undefined && await existsAtRevision(repoPath, base, source.path);
-    files.push({
-      path: source.path,
-      current: source.content,
-      previous: exists && base !== undefined ? await gitShow(repoPath, base, source.path) : undefined,
-      changedLines: exists ? await changedLineNumbers(ctx, source.path) : new Set<number>(),
-      status: exists ? "modified" : "added",
-    });
+    try {
+      files.push(await sourceRevision(ctx, base, source));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`Cannot compare ${source.path} with ${base}: ${detail}`, { cause: error });
+    }
   }
 
   return {
@@ -67,13 +61,58 @@ export async function discoverSources(ctx: RuleContext): Promise<Discovery> {
   };
 }
 
-async function changedLineNumbers(ctx: RuleContext, path: string): Promise<Set<number>> {
+function snapshotDiscovery(sources: Array<{ path: string; content: string }>): Discovery {
+  return {
+    mode: "repository",
+    files: sources.map((source) => ({
+      path: source.path,
+      current: source.content,
+      changedLines: new Set<number>(),
+      status: "repository",
+    })),
+    changedTestFiles: 0,
+    changedSourceFiles: sources.length,
+  };
+}
+
+async function sourceRevision(ctx: DiscoveryContext, base: string, source: { path: string; content: string }): Promise<SourceRevision> {
+  if (!await existsAtRevision(ctx.repoPath, base, source.path)) {
+    return {
+      path: source.path,
+      current: source.content,
+      changedLines: new Set<number>(),
+      status: "added",
+    };
+  }
+  return {
+    path: source.path,
+    current: source.content,
+    previous: await gitShow(ctx.repoPath, base, source.path),
+    changedLines: await changedLineNumbers(ctx, source.path),
+    status: "modified",
+  };
+}
+
+async function revisionExists(repoPath: string, revision: string): Promise<boolean> {
+  try {
+    await execute("git", ["-C", repoPath, "rev-parse", "--verify", "--quiet", `${revision}^{commit}`], {
+      maxBuffer: 1024 * 1024,
+    });
+    return true;
+  } catch (error) {
+    if ((error as { code?: unknown }).code === 1) return false;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Cannot verify baseline revision ${revision}: ${detail}`, { cause: error });
+  }
+}
+
+async function changedLineNumbers(ctx: DiscoveryContext, path: string): Promise<Set<number>> {
   const base = ctx.change?.baseRef;
   if (base === undefined) return new Set<number>();
   const args = ["diff", "--unified=0", base];
   const head = ctx.change?.headRef;
   if (head !== undefined && !ctx.change?.worktree) args.push(head);
-  args.push("--", path);
+  args.push("--", `:(literal)${path}`);
   const patch = await gitOutput(ctx.repoPath, args);
   const lines = new Set<number>();
   for (const match of patch.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
@@ -84,23 +123,13 @@ async function changedLineNumbers(ctx: RuleContext, path: string): Promise<Set<n
   return lines;
 }
 
-async function gitShow(repoPath: string, revision: string, path: string): Promise<string | undefined> {
-  try {
-    return await gitOutput(repoPath, ["show", `${revision}:${path}`]);
-  } catch {
-    return undefined;
-  }
+async function gitShow(repoPath: string, revision: string, path: string): Promise<string> {
+  return gitOutput(repoPath, ["show", `${revision}:${path}`]);
 }
 
 async function existsAtRevision(repoPath: string, revision: string, path: string): Promise<boolean> {
-  try {
-    await execute("git", ["-C", repoPath, "cat-file", "-e", `${revision}:${path}`], {
-      maxBuffer: 1024 * 1024,
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  const paths = await gitOutput(repoPath, ["ls-tree", "-z", "--name-only", revision, "--", `:(literal)${path}`]);
+  return paths.split("\0").includes(path);
 }
 
 async function gitOutput(repoPath: string, args: string[]): Promise<string> {

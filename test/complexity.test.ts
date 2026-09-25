@@ -6,9 +6,18 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { analyzeFile } from "../src/analyze.ts";
+import { discoverSources } from "../src/discover.ts";
 import { createApp } from "../src/index.ts";
 
 const execute = promisify(execFile);
+
+function discoveryContext(repoPath: string, path: string, content: string): Parameters<typeof discoverSources>[0] {
+  return {
+    repoPath,
+    change: { scanMode: "changed", baseRef: "HEAD", changedFiles: [path], changedRanges: [], worktree: true },
+    loadInScopeSources: async () => [{ path, content, status: "changed" }],
+  };
+}
 
 async function repository(before: string, after: string, testChange?: string, sourceFile = "service.ts"): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "complexity-repo-"));
@@ -41,13 +50,13 @@ async function review(root: string) {
   }
 }
 
-async function reviewChanged(root: string, changedFiles: string[]) {
+async function reviewChanged(root: string, changedFiles: string[], options: { baseRef?: string } = { baseRef: "HEAD" }) {
   return createApp().run({
     input: {
       source: { path: root },
       change: {
         type: "diff",
-        base_ref: "HEAD",
+        ...(options.baseRef === undefined ? {} : { base_ref: options.baseRef }),
         head_ref: "WORKTREE",
         scan_mode: "changed",
         changed_files: changedFiles,
@@ -178,6 +187,98 @@ test("reports branch growth when tests do not change", async () => {
   const finding = output.findings.find((item) => item.ruleId === "complexity.branch-without-tests");
   assert.ok(finding);
   assert.match(finding.summary, /does not modify tests/i);
+});
+
+test("new-file branches do not inflate the missing-tests finding for a modified file", async () => {
+  const root = await repository(SIMPLE, COMPLEX);
+  const baseline = await review(root);
+  const expected = baseline.findings.find((item) => item.ruleId === "complexity.branch-without-tests");
+  assert.ok(expected);
+  assert.equal(expected.summary, "Changed functions added 15 structural decision points, but this change does not modify tests.");
+
+  const newFile = `export function classify(value: number) {
+${Array.from({ length: 17 }, (_, index) => `  if (value === ${index}) return ${index};`).join("\n")}
+  return -1;
+}
+`;
+  await writeFile(join(root, "src", "classifier.ts"), newFile);
+
+  const output = await review(root);
+  const findings = output.findings.filter((item) => item.ruleId === "complexity.branch-without-tests");
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]?.summary, expected.summary);
+  assert.deepEqual(findings[0]?.evidence, expected.evidence);
+  assert.deepEqual(findings[0]?.evidence.map((item) => item.location?.file), ["src/service.ts"]);
+});
+
+test("does not call a new 38-line file complexity growth from zero", async () => {
+  const root = await repository(SIMPLE, SIMPLE);
+  const body = Array.from({ length: 17 }, (_, index) =>
+    `  if (value === ${index}) return ${index};`).join("\n");
+  const newFile = `export function classify(value: number) {
+${body}
+  return -1;
+}
+${"\n".repeat(17)}`;
+  assert.equal(newFile.split("\n").length, 38);
+  await writeFile(join(root, "src", "classifier.ts"), newFile);
+
+  const output = await review(root);
+  assert.deepEqual(output.findings, []);
+  assert.equal(output.opinion?.ship, true);
+});
+
+test("does not infer metric growth when the git baseline is unavailable", async () => {
+  const root = await repository(SIMPLE, COMPLEX);
+  for (const options of [{}, { baseRef: "missing-revision" }]) {
+    const output = await reviewChanged(root, ["src/service.ts"], options);
+    assert.deepEqual(output.findings, []);
+    assert.match(output.observations[0]?.summary ?? "", /without a git baseline/i);
+  }
+});
+
+test("does not hide a broken repository as an unavailable baseline", async () => {
+  const root = await mkdtemp(join(tmpdir(), "complexity-no-git-"));
+  const context = discoveryContext(root, "src/service.ts", COMPLEX);
+  await assert.rejects(discoverSources(context), (error: unknown) => {
+    assert.match((error as Error).message, /Cannot verify baseline revision HEAD/i);
+    assert.match(((error as Error).cause as { stderr?: string }).stderr ?? "", /not a git repository/i);
+    return true;
+  });
+});
+
+test("fails loudly when a base file cannot be read", async () => {
+  const root = await repository("x".repeat(17 * 1024 * 1024), SIMPLE);
+  const context = discoveryContext(root, "src/service.ts", SIMPLE);
+  await assert.rejects(discoverSources(context), /Cannot compare src\/service\.ts with HEAD:.*maxBuffer/i);
+});
+
+test("finds base files whose names contain Git pathspec characters", async () => {
+  const root = await repository(SIMPLE, COMPLEX, undefined, "service[old].ts");
+  const context = discoveryContext(root, "src/service[old].ts", COMPLEX);
+  const discovery = await discoverSources(context);
+  assert.equal(discovery.files[0]?.status, "modified");
+  assert.equal(discovery.files[0]?.previous, SIMPLE);
+  assert.ok(discovery.files[0]?.changedLines.size);
+});
+
+test("still reports concrete overengineering in a new file", async () => {
+  const root = await repository(SIMPLE, SIMPLE);
+  const overbuilt = `interface Runner { run(value: number): number }
+class DefaultRunner implements Runner { run(value: number) { return value + 1; } }
+function createRunner(): Runner { return new DefaultRunner(); }
+function implementation(value: number) { return createRunner().run(value); }
+function executor(value: number) { return implementation(value); }
+function strategy(value: number) { return executor(value); }
+function resolver(value: number) { return strategy(value); }
+function manager(value: number) { return resolver(value); }
+export function controller(value: number) { return manager(value); }
+`;
+  await writeFile(join(root, "src", "overbuilt.ts"), overbuilt);
+
+  const output = await review(root);
+  assert.ok(output.findings.some((finding) => finding.ruleId === "complexity.ai-overengineering"));
+  assert.equal(output.findings.some((finding) => finding.ruleId === "complexity.control-flow.increase"), false);
 });
 
 test("recognizes substantial simplification", async () => {
