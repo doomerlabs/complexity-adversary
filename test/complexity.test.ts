@@ -5,19 +5,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { type RuleContext } from "@adversarylabs/sdk";
 import { analyzeFile } from "../src/analyze.ts";
 import { discoverSources } from "../src/discover.ts";
 import { createApp } from "../src/index.ts";
 
 const execute = promisify(execFile);
 
-function discoveryContext(repoPath: string, path: string, content: string): RuleContext {
+function discoveryContext(repoPath: string, path: string, content: string): Parameters<typeof discoverSources>[0] {
   return {
     repoPath,
-    change: { scanMode: "changed", baseRef: "HEAD", changedFiles: [path] },
-    loadInScopeSources: async () => [{ path, content }],
-  } as unknown as RuleContext;
+    change: { scanMode: "changed", baseRef: "HEAD", changedFiles: [path], changedRanges: [], worktree: true },
+    loadInScopeSources: async () => [{ path, content, status: "changed" }],
+  };
 }
 
 async function repository(before: string, after: string, testChange?: string, sourceFile = "service.ts"): Promise<string> {
@@ -250,7 +249,7 @@ test("does not hide a broken repository as an unavailable baseline", async () =>
 test("fails loudly when a base file cannot be read", async () => {
   const root = await repository("x".repeat(17 * 1024 * 1024), SIMPLE);
   const context = discoveryContext(root, "src/service.ts", SIMPLE);
-  await assert.rejects(discoverSources(context), /maxBuffer/i);
+  await assert.rejects(discoverSources(context), /Cannot compare src\/service\.ts with HEAD:.*maxBuffer/i);
 });
 
 test("finds base files whose names contain Git pathspec characters", async () => {

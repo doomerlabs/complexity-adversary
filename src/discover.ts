@@ -28,7 +28,9 @@ export interface Discovery {
   changedSourceFiles: number;
 }
 
-export async function discoverSources(ctx: RuleContext): Promise<Discovery> {
+type DiscoveryContext = Pick<RuleContext, "repoPath" | "change" | "loadInScopeSources">;
+
+export async function discoverSources(ctx: DiscoveryContext): Promise<Discovery> {
   const repoPath = ctx.repoPath;
   const sources = await ctx.loadInScopeSources({ include: isSourcePath, limit: MAX_FILES });
   if (ctx.change === null || ctx.change.scanMode === "all") {
@@ -42,7 +44,12 @@ export async function discoverSources(ctx: RuleContext): Promise<Discovery> {
 
   const files: SourceRevision[] = [];
   for (const source of sources) {
-    files.push(await sourceRevision(ctx, base, source));
+    try {
+      files.push(await sourceRevision(ctx, base, source));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`Cannot compare ${source.path} with ${base}: ${detail}`, { cause: error });
+    }
   }
 
   return {
@@ -68,7 +75,7 @@ function snapshotDiscovery(sources: Array<{ path: string; content: string }>): D
   };
 }
 
-async function sourceRevision(ctx: RuleContext, base: string, source: { path: string; content: string }): Promise<SourceRevision> {
+async function sourceRevision(ctx: DiscoveryContext, base: string, source: { path: string; content: string }): Promise<SourceRevision> {
   if (!await existsAtRevision(ctx.repoPath, base, source.path)) {
     return {
       path: source.path,
@@ -98,7 +105,7 @@ async function revisionExists(repoPath: string, revision: string): Promise<boole
   }
 }
 
-async function changedLineNumbers(ctx: RuleContext, path: string): Promise<Set<number>> {
+async function changedLineNumbers(ctx: DiscoveryContext, path: string): Promise<Set<number>> {
   const base = ctx.change?.baseRef;
   if (base === undefined) return new Set<number>();
   const args = ["diff", "--unified=0", base];
