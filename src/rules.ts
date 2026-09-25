@@ -15,21 +15,26 @@ interface DesignSignals {
 }
 
 export function reviewComplexity(ctx: RuleContext, analysis: Analysis): void {
-  const cyclomatic = analysis.mode === "diff" ? analysis.deltas.filter(isCyclomaticIncrease) : [];
-  const cognitive = analysis.mode === "diff" ? analysis.deltas.filter(isCognitiveIncrease) : [];
-  const nesting = analysis.deltas.filter((delta) => increased(delta, "nesting", 2, 4, 5));
-  const growth = analysis.deltas.filter(isLargeGrowth);
-  const parameters = analysis.deltas.filter((delta) => increased(delta, "parameters", 3, 7, 8));
-  const responsibilities = analysis.deltas.filter(isResponsibilityExpansion);
-  const hiddenState = analysis.deltas.filter((delta) => increased(delta, "hiddenState", 2, 4, 5));
-  const magicConditions = analysis.deltas.filter((delta) => increased(delta, "booleanTerms", 2, 5, 6));
-  const configuration = analysis.deltas.filter((delta) => increased(delta, "configSurface", 4, 8, 10));
-  const recursion = analysis.deltas.filter(isRecursionRisk);
-  const errors = analysis.deltas.filter((delta) => increased(delta, "errorPaths", 2, 4, 5));
+  // A new file has no previous implementation to compare. Keep architectural
+  // signals, but do not describe its initial metrics as complexity growth.
+  const addedFiles = new Set(analysis.files.filter((file) => file.status === "added").map((file) => file.path));
+  const metricDeltas = analysis.deltas.filter((delta) => !addedFiles.has(delta.path));
+  const cyclomatic = analysis.mode === "diff" ? metricDeltas.filter(isCyclomaticIncrease) : [];
+  const cognitive = analysis.mode === "diff" ? metricDeltas.filter(isCognitiveIncrease) : [];
+  const nesting = metricDeltas.filter((delta) => increased(delta, "nesting", 2, 4, 5));
+  const growth = metricDeltas.filter(isLargeGrowth);
+  const parameters = metricDeltas.filter((delta) => increased(delta, "parameters", 3, 7, 8));
+  const responsibilities = metricDeltas.filter(isResponsibilityExpansion);
+  const hiddenState = metricDeltas.filter((delta) => increased(delta, "hiddenState", 2, 4, 5));
+  const magicConditions = metricDeltas.filter((delta) => increased(delta, "booleanTerms", 2, 5, 6));
+  const configuration = metricDeltas.filter((delta) => increased(delta, "configSurface", 4, 8, 10));
+  const recursion = metricDeltas.filter(isRecursionRisk);
+  const errors = metricDeltas.filter((delta) => increased(delta, "errorPaths", 2, 4, 5));
   const design = designSignals(analysis, cyclomatic.length + cognitive.length + nesting.length);
+  const comparableBranchDelta = metricDeltas.reduce((sum, delta) => sum + branchDelta(delta), 0);
   const branchWithoutTests =
     analysis.mode === "diff" &&
-    analysis.aggregateBranchDelta >= 6 &&
+    comparableBranchDelta >= 6 &&
     analysis.changedSourceFiles > 0 &&
     analysis.changedTestFiles === 0;
   const aiOverengineering = overengineeringScore(analysis, design, growth, responsibilities) >= 6;
@@ -64,7 +69,7 @@ export function reviewComplexity(ctx: RuleContext, analysis: Analysis): void {
   emitStructuralClones(ctx, structuralClones);
 
   if (branchWithoutTests) {
-    const evidence = analysis.deltas
+    const evidence = metricDeltas
       .filter((delta) => delta.current.branches > (delta.previous?.branches ?? 0))
       .sort((a, b) => branchDelta(b) - branchDelta(a))
       .slice(0, 4)
@@ -75,7 +80,7 @@ export function reviewComplexity(ctx: RuleContext, analysis: Analysis): void {
       category: "testing",
       severity: "medium",
       confidence: "high",
-      summary: `Changed functions added ${analysis.aggregateBranchDelta} structural decision points, but this change does not modify tests.`,
+      summary: `Changed functions added ${comparableBranchDelta} structural decision points, but this change does not modify tests.`,
       whyItMatters: "New paths are where boundary conditions and regressions concentrate; unchanged tests provide little evidence that those paths were considered.",
       impact: "Reviewers must reason about the additional branches manually, and future refactors can break an unexercised path silently.",
       evidence,

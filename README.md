@@ -33,4 +33,4 @@ This repository does not currently declare a project license. The published arti
 
 ## Boundaries
 
-It judges complexity introduced by a change, not style, security, type safety, or unchanged legacy complexity. The clone signal requires the base revision to contain exactly one normalized occurrence and the change to introduce a second changed occurrence, so existing duplication, short idioms, comments, literals, generated code, and independently introduced symmetric implementations stay quiet.
+It judges complexity introduced by a change, not style, security, type safety, or unchanged legacy complexity. New files have no prior implementation, so their initial line and branch counts do not trigger growth findings; concrete abstraction and indirection signals can still be reported. The clone signal requires the base revision to contain exactly one normalized occurrence and the change to introduce a second changed occurrence, so existing duplication, short idioms, comments, literals, generated code, and independently introduced symmetric implementations stay quiet.

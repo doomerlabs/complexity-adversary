@@ -180,6 +180,42 @@ test("reports branch growth when tests do not change", async () => {
   assert.match(finding.summary, /does not modify tests/i);
 });
 
+test("does not call a new 38-line file complexity growth from zero", async () => {
+  const root = await repository(SIMPLE, SIMPLE);
+  const body = Array.from({ length: 17 }, (_, index) =>
+    `  if (value === ${index}) return ${index};`).join("\n");
+  const newFile = `export function classify(value: number) {
+${body}
+  return -1;
+}
+${"\n".repeat(17)}`;
+  assert.equal(newFile.split("\n").length, 38);
+  await writeFile(join(root, "src", "classifier.ts"), newFile);
+
+  const output = await review(root);
+  assert.deepEqual(output.findings, []);
+  assert.equal(output.opinion?.ship, true);
+});
+
+test("still reports concrete overengineering in a new file", async () => {
+  const root = await repository(SIMPLE, SIMPLE);
+  const overbuilt = `interface Runner { run(value: number): number }
+class DefaultRunner implements Runner { run(value: number) { return value + 1; } }
+function createRunner(): Runner { return new DefaultRunner(); }
+function implementation(value: number) { return createRunner().run(value); }
+function executor(value: number) { return implementation(value); }
+function strategy(value: number) { return executor(value); }
+function resolver(value: number) { return strategy(value); }
+function manager(value: number) { return resolver(value); }
+export function controller(value: number) { return manager(value); }
+`;
+  await writeFile(join(root, "src", "overbuilt.ts"), overbuilt);
+
+  const output = await review(root);
+  assert.ok(output.findings.some((finding) => finding.ruleId === "complexity.ai-overengineering"));
+  assert.equal(output.findings.some((finding) => finding.ruleId === "complexity.control-flow.increase"), false);
+});
+
 test("recognizes substantial simplification", async () => {
   const output = await review(await repository(COMPLEX, SIMPLE, "// simplified-path coverage\n"));
   assert.equal(output.findings.some((finding) => finding.ruleId?.includes("increase")), false);
