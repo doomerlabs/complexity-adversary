@@ -15,10 +15,10 @@ interface DesignSignals {
 }
 
 export function reviewComplexity(ctx: RuleContext, analysis: Analysis): void {
-  // A new file has no previous implementation to compare. Keep architectural
-  // signals, but do not describe its initial metrics as complexity growth.
-  const addedFiles = new Set(analysis.files.filter((file) => file.status === "added").map((file) => file.path));
-  const metricDeltas = analysis.deltas.filter((delta) => !addedFiles.has(delta.path));
+  // Only files present at a valid baseline can support growth findings.
+  // Keep architectural signals for new files and baseline-free snapshots.
+  const comparableFiles = new Set(analysis.files.filter((file) => file.status === "modified").map((file) => file.path));
+  const metricDeltas = analysis.deltas.filter((delta) => comparableFiles.has(delta.path));
   const cyclomatic = analysis.mode === "diff" ? metricDeltas.filter(isCyclomaticIncrease) : [];
   const cognitive = analysis.mode === "diff" ? metricDeltas.filter(isCognitiveIncrease) : [];
   const nesting = metricDeltas.filter((delta) => increased(delta, "nesting", 2, 4, 5));

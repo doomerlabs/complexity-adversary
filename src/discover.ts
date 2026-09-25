@@ -32,35 +32,17 @@ export async function discoverSources(ctx: RuleContext): Promise<Discovery> {
   const repoPath = ctx.repoPath;
   const sources = await ctx.loadInScopeSources({ include: isSourcePath, limit: MAX_FILES });
   if (ctx.change === null || ctx.change.scanMode === "all") {
-    return {
-      mode: "repository",
-      files: sources.map((source) => ({
-        path: source.path,
-        current: source.content,
-        changedLines: new Set<number>(),
-        status: "repository",
-      })),
-      changedTestFiles: 0,
-      changedSourceFiles: sources.length,
-    };
+    return snapshotDiscovery(sources);
+  }
+
+  const base = ctx.change.baseRef;
+  if (base === undefined || !await revisionExists(repoPath, base)) {
+    return snapshotDiscovery(sources);
   }
 
   const files: SourceRevision[] = [];
-  const base = ctx.change.baseRef;
-  const baselineAvailable = base !== undefined && await revisionExists(repoPath, base);
   for (const source of sources) {
-    const exists = baselineAvailable && base !== undefined && await existsAtRevision(repoPath, base, source.path);
-    const previous = exists && base !== undefined ? await gitShow(repoPath, base, source.path) : undefined;
-    const status = !baselineAvailable || (exists && previous === undefined)
-      ? "unbaselined"
-      : exists ? "modified" : "added";
-    files.push({
-      path: source.path,
-      current: source.content,
-      previous,
-      changedLines: status === "modified" ? await changedLineNumbers(ctx, source.path) : new Set<number>(),
-      status,
-    });
+    files.push(await sourceRevision(ctx, base, source));
   }
 
   return {
@@ -72,14 +54,47 @@ export async function discoverSources(ctx: RuleContext): Promise<Discovery> {
   };
 }
 
+function snapshotDiscovery(sources: Array<{ path: string; content: string }>): Discovery {
+  return {
+    mode: "repository",
+    files: sources.map((source) => ({
+      path: source.path,
+      current: source.content,
+      changedLines: new Set<number>(),
+      status: "repository",
+    })),
+    changedTestFiles: 0,
+    changedSourceFiles: sources.length,
+  };
+}
+
+async function sourceRevision(ctx: RuleContext, base: string, source: { path: string; content: string }): Promise<SourceRevision> {
+  if (!await existsAtRevision(ctx.repoPath, base, source.path)) {
+    return {
+      path: source.path,
+      current: source.content,
+      changedLines: new Set<number>(),
+      status: "added",
+    };
+  }
+  return {
+    path: source.path,
+    current: source.content,
+    previous: await gitShow(ctx.repoPath, base, source.path),
+    changedLines: await changedLineNumbers(ctx, source.path),
+    status: "modified",
+  };
+}
+
 async function revisionExists(repoPath: string, revision: string): Promise<boolean> {
   try {
-    await execute("git", ["-C", repoPath, "cat-file", "-e", `${revision}^{commit}`], {
+    await execute("git", ["-C", repoPath, "rev-parse", "--verify", "--quiet", `${revision}^{commit}`], {
       maxBuffer: 1024 * 1024,
     });
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if ((error as { code?: unknown }).code === 1) return false;
+    throw error;
   }
 }
 
@@ -100,23 +115,13 @@ async function changedLineNumbers(ctx: RuleContext, path: string): Promise<Set<n
   return lines;
 }
 
-async function gitShow(repoPath: string, revision: string, path: string): Promise<string | undefined> {
-  try {
-    return await gitOutput(repoPath, ["show", `${revision}:${path}`]);
-  } catch {
-    return undefined;
-  }
+async function gitShow(repoPath: string, revision: string, path: string): Promise<string> {
+  return gitOutput(repoPath, ["show", `${revision}:${path}`]);
 }
 
 async function existsAtRevision(repoPath: string, revision: string, path: string): Promise<boolean> {
-  try {
-    await execute("git", ["-C", repoPath, "cat-file", "-e", `${revision}:${path}`], {
-      maxBuffer: 1024 * 1024,
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  const paths = await gitOutput(repoPath, ["ls-tree", "-z", "--name-only", revision, "--", path]);
+  return paths.split("\0").includes(path);
 }
 
 async function gitOutput(repoPath: string, args: string[]): Promise<string> {

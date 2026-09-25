@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { analyzeFile } from "../src/analyze.ts";
+import { discoverSources } from "../src/discover.ts";
 import { createApp } from "../src/index.ts";
 
 const execute = promisify(execFile);
@@ -219,13 +220,33 @@ ${"\n".repeat(17)}`;
   assert.equal(output.opinion?.ship, true);
 });
 
-test("keeps diff findings when the git baseline is unavailable", async () => {
+test("does not infer metric growth when the git baseline is unavailable", async () => {
   const root = await repository(SIMPLE, COMPLEX);
   for (const options of [{}, { baseRef: "missing-revision" }]) {
     const output = await reviewChanged(root, ["src/service.ts"], options);
-    assert.ok(output.findings.some((finding) => finding.ruleId === "complexity.control-flow.increase"));
-    assert.ok(output.findings.some((finding) => finding.ruleId === "complexity.branch-without-tests"));
+    assert.deepEqual(output.findings, []);
+    assert.match(output.observations[0]?.summary ?? "", /without a git baseline/i);
   }
+});
+
+test("does not hide a broken repository as an unavailable baseline", async () => {
+  const root = await mkdtemp(join(tmpdir(), "complexity-no-git-"));
+  const context = {
+    repoPath: root,
+    change: { scanMode: "changed", baseRef: "HEAD", changedFiles: ["src/service.ts"] },
+    loadInScopeSources: async () => [{ path: "src/service.ts", content: COMPLEX }],
+  } as unknown as Parameters<typeof discoverSources>[0];
+  await assert.rejects(discoverSources(context), /not a git repository/i);
+});
+
+test("does not treat an unreadable base file as a missing baseline", async () => {
+  const root = await repository("x".repeat(17 * 1024 * 1024), SIMPLE);
+  const context = {
+    repoPath: root,
+    change: { scanMode: "changed", baseRef: "HEAD", changedFiles: ["src/service.ts"] },
+    loadInScopeSources: async () => [{ path: "src/service.ts", content: SIMPLE }],
+  } as unknown as Parameters<typeof discoverSources>[0];
+  await assert.rejects(discoverSources(context), /maxBuffer/i);
 });
 
 test("still reports concrete overengineering in a new file", async () => {

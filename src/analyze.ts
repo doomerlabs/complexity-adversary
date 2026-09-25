@@ -73,7 +73,6 @@ export function analyzeDiscovery(discovery: Discovery): Analysis {
       const changed =
         revision?.status === "repository" ||
         revision?.status === "added" ||
-        revision?.status === "unbaselined" ||
         intersects(revision?.changedLines ?? new Set<number>(), fn.line, fn.endLine);
       if (changed) {
         deltas.push({
