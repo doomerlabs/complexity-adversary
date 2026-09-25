@@ -5,11 +5,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
+import { type RuleContext } from "@adversarylabs/sdk";
 import { analyzeFile } from "../src/analyze.ts";
 import { discoverSources } from "../src/discover.ts";
 import { createApp } from "../src/index.ts";
 
 const execute = promisify(execFile);
+
+function discoveryContext(repoPath: string, path: string, content: string): RuleContext {
+  return {
+    repoPath,
+    change: { scanMode: "changed", baseRef: "HEAD", changedFiles: [path] },
+    loadInScopeSources: async () => [{ path, content }],
+  } as unknown as RuleContext;
+}
 
 async function repository(before: string, after: string, testChange?: string, sourceFile = "service.ts"): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "complexity-repo-"));
@@ -231,39 +240,26 @@ test("does not infer metric growth when the git baseline is unavailable", async 
 
 test("does not hide a broken repository as an unavailable baseline", async () => {
   const root = await mkdtemp(join(tmpdir(), "complexity-no-git-"));
-  const context = {
-    repoPath: root,
-    change: { scanMode: "changed", baseRef: "HEAD", changedFiles: ["src/service.ts"] },
-    loadInScopeSources: async () => [{ path: "src/service.ts", content: COMPLEX }],
-  } as unknown as Parameters<typeof discoverSources>[0];
+  const context = discoveryContext(root, "src/service.ts", COMPLEX);
   await assert.rejects(discoverSources(context), (error: unknown) => {
     assert.match((error as { stderr?: string }).stderr ?? "", /not a git repository/i);
     return true;
   });
 });
 
-test("skips growth comparison when a base file cannot be read", async () => {
+test("fails loudly when a base file cannot be read", async () => {
   const root = await repository("x".repeat(17 * 1024 * 1024), SIMPLE);
-  const context = {
-    repoPath: root,
-    change: { scanMode: "changed", baseRef: "HEAD", changedFiles: ["src/service.ts"] },
-    loadInScopeSources: async () => [{ path: "src/service.ts", content: SIMPLE }],
-  } as unknown as Parameters<typeof discoverSources>[0];
-  const discovery = await discoverSources(context);
-  assert.equal(discovery.files[0]?.status, "repository");
-  assert.equal(discovery.files[0]?.previous, undefined);
+  const context = discoveryContext(root, "src/service.ts", SIMPLE);
+  await assert.rejects(discoverSources(context), /maxBuffer/i);
 });
 
 test("finds base files whose names contain Git pathspec characters", async () => {
   const root = await repository(SIMPLE, COMPLEX, undefined, "service[old].ts");
-  const context = {
-    repoPath: root,
-    change: { scanMode: "changed", baseRef: "HEAD", changedFiles: ["src/service[old].ts"] },
-    loadInScopeSources: async () => [{ path: "src/service[old].ts", content: COMPLEX }],
-  } as unknown as Parameters<typeof discoverSources>[0];
+  const context = discoveryContext(root, "src/service[old].ts", COMPLEX);
   const discovery = await discoverSources(context);
   assert.equal(discovery.files[0]?.status, "modified");
   assert.equal(discovery.files[0]?.previous, SIMPLE);
+  assert.ok(discovery.files[0]?.changedLines.size);
 });
 
 test("still reports concrete overengineering in a new file", async () => {

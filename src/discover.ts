@@ -77,21 +77,10 @@ async function sourceRevision(ctx: RuleContext, base: string, source: { path: st
       status: "added",
     };
   }
-  let previous: string;
-  try {
-    previous = await gitShow(ctx.repoPath, base, source.path);
-  } catch {
-    return {
-      path: source.path,
-      current: source.content,
-      changedLines: new Set<number>(),
-      status: "repository",
-    };
-  }
   return {
     path: source.path,
     current: source.content,
-    previous,
+    previous: await gitShow(ctx.repoPath, base, source.path),
     changedLines: await changedLineNumbers(ctx, source.path),
     status: "modified",
   };
@@ -115,7 +104,7 @@ async function changedLineNumbers(ctx: RuleContext, path: string): Promise<Set<n
   const args = ["diff", "--unified=0", base];
   const head = ctx.change?.headRef;
   if (head !== undefined && !ctx.change?.worktree) args.push(head);
-  args.push("--", path);
+  args.push("--", `:(literal)${path}`);
   const patch = await gitOutput(ctx.repoPath, args);
   const lines = new Set<number>();
   for (const match of patch.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
