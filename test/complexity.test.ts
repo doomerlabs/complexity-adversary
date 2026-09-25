@@ -241,7 +241,8 @@ test("does not hide a broken repository as an unavailable baseline", async () =>
   const root = await mkdtemp(join(tmpdir(), "complexity-no-git-"));
   const context = discoveryContext(root, "src/service.ts", COMPLEX);
   await assert.rejects(discoverSources(context), (error: unknown) => {
-    assert.match((error as { stderr?: string }).stderr ?? "", /not a git repository/i);
+    assert.match((error as Error).message, /Cannot verify baseline revision HEAD/i);
+    assert.match(((error as Error).cause as { stderr?: string }).stderr ?? "", /not a git repository/i);
     return true;
   });
 });

@@ -101,7 +101,8 @@ async function revisionExists(repoPath: string, revision: string): Promise<boole
     return true;
   } catch (error) {
     if ((error as { code?: unknown }).code === 1) return false;
-    throw error;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Cannot verify baseline revision ${revision}: ${detail}`, { cause: error });
   }
 }
 
