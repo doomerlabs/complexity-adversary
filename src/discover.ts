@@ -77,10 +77,21 @@ async function sourceRevision(ctx: RuleContext, base: string, source: { path: st
       status: "added",
     };
   }
+  let previous: string;
+  try {
+    previous = await gitShow(ctx.repoPath, base, source.path);
+  } catch {
+    return {
+      path: source.path,
+      current: source.content,
+      changedLines: new Set<number>(),
+      status: "repository",
+    };
+  }
   return {
     path: source.path,
     current: source.content,
-    previous: await gitShow(ctx.repoPath, base, source.path),
+    previous,
     changedLines: await changedLineNumbers(ctx, source.path),
     status: "modified",
   };
@@ -120,7 +131,7 @@ async function gitShow(repoPath: string, revision: string, path: string): Promis
 }
 
 async function existsAtRevision(repoPath: string, revision: string, path: string): Promise<boolean> {
-  const paths = await gitOutput(repoPath, ["ls-tree", "-z", "--name-only", revision, "--", path]);
+  const paths = await gitOutput(repoPath, ["ls-tree", "-z", "--name-only", revision, "--", `:(literal)${path}`]);
   return paths.split("\0").includes(path);
 }
 

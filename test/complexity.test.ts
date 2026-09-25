@@ -236,17 +236,34 @@ test("does not hide a broken repository as an unavailable baseline", async () =>
     change: { scanMode: "changed", baseRef: "HEAD", changedFiles: ["src/service.ts"] },
     loadInScopeSources: async () => [{ path: "src/service.ts", content: COMPLEX }],
   } as unknown as Parameters<typeof discoverSources>[0];
-  await assert.rejects(discoverSources(context), /not a git repository/i);
+  await assert.rejects(discoverSources(context), (error: unknown) => {
+    assert.match((error as { stderr?: string }).stderr ?? "", /not a git repository/i);
+    return true;
+  });
 });
 
-test("does not treat an unreadable base file as a missing baseline", async () => {
+test("skips growth comparison when a base file cannot be read", async () => {
   const root = await repository("x".repeat(17 * 1024 * 1024), SIMPLE);
   const context = {
     repoPath: root,
     change: { scanMode: "changed", baseRef: "HEAD", changedFiles: ["src/service.ts"] },
     loadInScopeSources: async () => [{ path: "src/service.ts", content: SIMPLE }],
   } as unknown as Parameters<typeof discoverSources>[0];
-  await assert.rejects(discoverSources(context), /maxBuffer/i);
+  const discovery = await discoverSources(context);
+  assert.equal(discovery.files[0]?.status, "repository");
+  assert.equal(discovery.files[0]?.previous, undefined);
+});
+
+test("finds base files whose names contain Git pathspec characters", async () => {
+  const root = await repository(SIMPLE, COMPLEX, undefined, "service[old].ts");
+  const context = {
+    repoPath: root,
+    change: { scanMode: "changed", baseRef: "HEAD", changedFiles: ["src/service[old].ts"] },
+    loadInScopeSources: async () => [{ path: "src/service[old].ts", content: COMPLEX }],
+  } as unknown as Parameters<typeof discoverSources>[0];
+  const discovery = await discoverSources(context);
+  assert.equal(discovery.files[0]?.status, "modified");
+  assert.equal(discovery.files[0]?.previous, SIMPLE);
 });
 
 test("still reports concrete overengineering in a new file", async () => {
