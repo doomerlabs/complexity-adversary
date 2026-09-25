@@ -46,15 +46,20 @@ export async function discoverSources(ctx: RuleContext): Promise<Discovery> {
   }
 
   const files: SourceRevision[] = [];
+  const base = ctx.change.baseRef;
+  const baselineAvailable = base !== undefined && await revisionExists(repoPath, base);
   for (const source of sources) {
-    const base = ctx.change.baseRef;
-    const exists = base !== undefined && await existsAtRevision(repoPath, base, source.path);
+    const exists = baselineAvailable && base !== undefined && await existsAtRevision(repoPath, base, source.path);
+    const previous = exists && base !== undefined ? await gitShow(repoPath, base, source.path) : undefined;
+    const status = !baselineAvailable || (exists && previous === undefined)
+      ? "unbaselined"
+      : exists ? "modified" : "added";
     files.push({
       path: source.path,
       current: source.content,
-      previous: exists && base !== undefined ? await gitShow(repoPath, base, source.path) : undefined,
-      changedLines: exists ? await changedLineNumbers(ctx, source.path) : new Set<number>(),
-      status: exists ? "modified" : "added",
+      previous,
+      changedLines: status === "modified" ? await changedLineNumbers(ctx, source.path) : new Set<number>(),
+      status,
     });
   }
 
@@ -65,6 +70,17 @@ export async function discoverSources(ctx: RuleContext): Promise<Discovery> {
     changedTestFiles: ctx.change.changedFiles.filter((path) => isSourcePath(path) && isTestPath(path)).length,
     changedSourceFiles: files.filter((file) => !isTestPath(file.path)).length,
   };
+}
+
+async function revisionExists(repoPath: string, revision: string): Promise<boolean> {
+  try {
+    await execute("git", ["-C", repoPath, "cat-file", "-e", `${revision}^{commit}`], {
+      maxBuffer: 1024 * 1024,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function changedLineNumbers(ctx: RuleContext, path: string): Promise<Set<number>> {

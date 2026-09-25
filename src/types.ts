@@ -23,7 +23,7 @@ export interface SourceRevision {
   current: string;
   previous?: string;
   changedLines: Set<number>;
-  status: "added" | "modified" | "repository";
+  status: "added" | "modified" | "unbaselined" | "repository";
 }
 
 export interface FunctionMetrics {

@@ -41,13 +41,13 @@ async function review(root: string) {
   }
 }
 
-async function reviewChanged(root: string, changedFiles: string[]) {
+async function reviewChanged(root: string, changedFiles: string[], options: { baseRef?: string } = { baseRef: "HEAD" }) {
   return createApp().run({
     input: {
       source: { path: root },
       change: {
         type: "diff",
-        base_ref: "HEAD",
+        ...(options.baseRef === undefined ? {} : { base_ref: options.baseRef }),
         head_ref: "WORKTREE",
         scan_mode: "changed",
         changed_files: changedFiles,
@@ -217,6 +217,15 @@ ${"\n".repeat(17)}`;
   const output = await review(root);
   assert.deepEqual(output.findings, []);
   assert.equal(output.opinion?.ship, true);
+});
+
+test("keeps diff findings when the git baseline is unavailable", async () => {
+  const root = await repository(SIMPLE, COMPLEX);
+  for (const options of [{}, { baseRef: "missing-revision" }]) {
+    const output = await reviewChanged(root, ["src/service.ts"], options);
+    assert.ok(output.findings.some((finding) => finding.ruleId === "complexity.control-flow.increase"));
+    assert.ok(output.findings.some((finding) => finding.ruleId === "complexity.branch-without-tests"));
+  }
 });
 
 test("still reports concrete overengineering in a new file", async () => {
