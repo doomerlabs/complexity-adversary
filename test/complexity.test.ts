@@ -180,6 +180,28 @@ test("reports branch growth when tests do not change", async () => {
   assert.match(finding.summary, /does not modify tests/i);
 });
 
+test("new-file branches do not inflate the missing-tests finding for a modified file", async () => {
+  const root = await repository(SIMPLE, COMPLEX);
+  const baseline = await review(root);
+  const expected = baseline.findings.find((item) => item.ruleId === "complexity.branch-without-tests");
+  assert.ok(expected);
+  assert.equal(expected.summary, "Changed functions added 15 structural decision points, but this change does not modify tests.");
+
+  const newFile = `export function classify(value: number) {
+${Array.from({ length: 17 }, (_, index) => `  if (value === ${index}) return ${index};`).join("\n")}
+  return -1;
+}
+`;
+  await writeFile(join(root, "src", "classifier.ts"), newFile);
+
+  const output = await review(root);
+  const findings = output.findings.filter((item) => item.ruleId === "complexity.branch-without-tests");
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]?.summary, expected.summary);
+  assert.deepEqual(findings[0]?.evidence, expected.evidence);
+  assert.deepEqual(findings[0]?.evidence.map((item) => item.location?.file), ["src/service.ts"]);
+});
+
 test("does not call a new 38-line file complexity growth from zero", async () => {
   const root = await repository(SIMPLE, SIMPLE);
   const body = Array.from({ length: 17 }, (_, index) =>
